@@ -61,19 +61,17 @@ def pytest_sessionstart(session):
         if exit_code == 0:
             break
 
-    print("Creating test bucket and loading data")
+    print("Waiting for Couchbase Server to be ready")
     exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/cb_perf',
                                                'list',
                                                '--host', '127.0.0.1',
-                                               '--ping',
-                                               '--test'])
+                                               '--wait'])
 
     for line in output.split(b'\n'):
         print(line.decode("utf-8"))
     assert exit_code == 0
 
-    time.sleep(2)
-
+    print("Creating test bucket and loading data")
     exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/cb_perf',
                                                'load',
                                                '--host', '127.0.0.1',
@@ -85,6 +83,7 @@ def pytest_sessionstart(session):
     for line in output.split(b'\n'):
         print(line.decode("utf-8"))
     assert exit_code == 0
+    print("Ready.")
 
 
 def pytest_sessionfinish(session, exitstatus):
