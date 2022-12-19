@@ -3,13 +3,24 @@
 import argparse
 import sys
 import signal
+import os
+import traceback
+import warnings
+import logging
 from lib.httpsessionmgr import api_session
 from lib.httpexceptions import HTTPForbidden, HTTPNotImplemented
 from lib.cbsync import cb_connect_s
 from lib.retries import retry
 
+warnings.filterwarnings("ignore")
+logger = logging.getLogger()
+
 
 def break_signal_handler(signum, frame):
+    if 'SGW_CLI_DEBUG_LEVEL' in os.environ:
+        if int(os.environ['SGW_CLI_DEBUG_LEVEL']) == 0:
+            tb = traceback.format_exc()
+            print(tb)
     print("")
     print("Break received, aborting.")
     sys.exit(1)
@@ -215,7 +226,10 @@ class sg_user(api_session):
 
 
 def main():
+    global logger
     signal.signal(signal.SIGINT, break_signal_handler)
+    default_debug_file = 'debug.log'
+    debug_file = os.environ.get("SGW_CLI_DEBUG_FILE", default_debug_file)
 
     parent_parser = argparse.ArgumentParser(add_help=False)
     parent_parser.add_argument('-u', '--user', action='store', help="User Name", default="Administrator")
@@ -256,6 +270,31 @@ def main():
     user_sub_mode.add_parser('list', help="List Users", parents=[parent_parser, user_parser], add_help=False)
     user_sub_mode.add_parser('map', help="Map values to users", parents=[parent_parser, user_parser], add_help=False)
     parameters = main_parser.parse_args()
+
+    try:
+        open(debug_file, 'w').close()
+    except Exception as err:
+        print(f"[!] Warning: can not clear log file {debug_file}: {err}")
+
+    handler = logging.FileHandler(debug_file)
+    formatter = logging.Formatter(logging.BASIC_FORMAT)
+    handler.setFormatter(formatter)
+
+    try:
+        debug_level = int(os.environ['SGW_CLI_DEBUG_LEVEL'])
+    except (ValueError, KeyError):
+        debug_level = 2
+
+    if debug_level == 0:
+        logger.setLevel(logging.DEBUG)
+    elif debug_level == 1:
+        logger.setLevel(logging.INFO)
+    elif debug_level == 2:
+        logger.setLevel(logging.ERROR)
+    else:
+        logger.setLevel(logging.CRITICAL)
+
+    logger.addHandler(handler)
 
     if parameters.command == 'database':
         sgdb = sg_database(parameters.host, parameters.user, parameters.password)

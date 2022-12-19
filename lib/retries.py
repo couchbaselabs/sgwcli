@@ -89,7 +89,8 @@ def retry(retry_count=10,
                             logger.debug(f"{func.__name__} retry limit exceeded")
                             raise
 
-                        logger.debug(f"{func.__name__} [sync] will retry, number {retry_number + 1}")
+                        logger.debug(f"{func.__name__}: error: {err}")
+                        logger.debug(f"{func.__name__} will retry, number {retry_number + 1}")
                         wait = factor
                         wait *= (2 ** (retry_number + 1))
                         time.sleep(wait)

@@ -7,6 +7,7 @@ output*
 test_output.out
 test_fail_*.out
 test_fail_*.log
+debug.log
 
 # ignore standard Eclipse files
 .project
