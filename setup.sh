@@ -195,6 +195,7 @@ case "$SYSTEM_UNAME" in
       check_macos
       BREW_PREFIX=$(brew --prefix)
       PYTHON_BIN=${PYTHON_BIN:-python3.9}
+      export OPENSSL_ROOT_DIR=$(brew --prefix openssl@1.1)
       ;;
     CYGWIN*)
       machine=Cygwin
@@ -226,6 +227,8 @@ if [ "$PY_MAJOR" -lt "$MAJOR_REV" ] || [ "$PY_MINOR" -lt "$MINOR_REV" ]; then
   exit 1
 fi
 
+[ -n "$OPENSSL_ROOT_DIR" ] && echo "[i] OPENSSL_ROOT_DIR set to \"$OPENSSL_ROOT_DIR\""
+
 if [ -d $SCRIPTDIR/$VENV_NAME ]; then
   echo "Virtual environment $SCRIPTDIR/$VENV_NAME already exists."
   printf "Remove the existing directory? (y/n) [y]:"
@@ -254,7 +257,7 @@ set_pip_bin
 
 printf "Installing dependencies... "
 $PYTHON_BIN -m pip install --upgrade pip setuptools wheel >> setup.log 2>&1
-$PIP_BIN install --no-cache-dir -r requirements.txt >> setup.log 2>&1
+$PIP_BIN install -v --no-color --no-cache-dir -r requirements.txt >> setup.log 2>&1
 if [ $? -ne 0 ]; then
   echo "Setup failed."
   rm -rf ${SCRIPTDIR:?}/${VENV_NAME:?}
