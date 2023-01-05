@@ -2,6 +2,10 @@
 
 Couchbase Sync Gateway CLI
 
+## Disclaimer
+
+> This is not an officially supported utility
+
 Database Commands:
 
 | Command | Description                                 |
