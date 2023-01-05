@@ -151,7 +151,11 @@ class sg_database(api_session):
             response = self.api_get(f"/{name}/_all_docs").json()
             for item in response["rows"]:
                 document = self.api_get(f"/{name}/_raw/{item['id']}").json()
-                print(f"Key: {item['key']} Id: {item['id']} Channels: {document['_sync']['history']['channels']}")
+                sequence = document['_sync']['sequence']
+                offset = document['_sync']['recent_sequences'].index(sequence)
+                print(f"Key: {item['key']} "
+                      f"Id: {item['id']} "
+                      f"Channels: {document['_sync']['history']['channels'][offset]}")
         except HTTPForbidden:
             print(f"Database {name} does not exist.")
             sys.exit(1)
