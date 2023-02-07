@@ -195,7 +195,6 @@ case "$SYSTEM_UNAME" in
       check_macos
       BREW_PREFIX=$(brew --prefix)
       PYTHON_BIN=${PYTHON_BIN:-python3.9}
-      export OPENSSL_ROOT_DIR=$(brew --prefix openssl@1.1)
       ;;
     CYGWIN*)
       machine=Cygwin
@@ -226,8 +225,6 @@ if [ "$PY_MAJOR" -lt "$MAJOR_REV" ] || [ "$PY_MINOR" -lt "$MINOR_REV" ]; then
   echo "Python ${MAJOR_REV}.${MINOR_REV} or higher is required."
   exit 1
 fi
-
-[ -n "$OPENSSL_ROOT_DIR" ] && echo "[i] OPENSSL_ROOT_DIR set to \"$OPENSSL_ROOT_DIR\""
 
 if [ -d $SCRIPTDIR/$VENV_NAME ]; then
   echo "Virtual environment $SCRIPTDIR/$VENV_NAME already exists."

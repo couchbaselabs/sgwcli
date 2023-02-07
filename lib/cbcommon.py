@@ -5,8 +5,11 @@ import os
 import attr
 from attr.validators import instance_of as io, optional
 from typing import Protocol, Iterable
-from .exceptions import (DNSLookupTimeout, NodeUnreachable, NodeConnectionTimeout, NodeConnectionError, NodeConnectionFailed,
-                         ClusterKVServiceError, ClusterHealthCheckError, ClusterQueryServiceError, ClusterViewServiceError)
+from .exceptions import (DNSLookupTimeout, IsCollectionException, CollectionWaitException, ScopeWaitException, BucketWaitException, BucketNotFound,
+                         CollectionNotDefined, IndexNotReady, IndexNotFoundError, NodeUnreachable, CollectionCountException, CollectionNameNotFound,
+                         CollectionCountError, NodeConnectionTimeout, NodeConnectionError, NodeConnectionFailed, CollectionSubdocUpsertError, QueryArgumentsError,
+                         IndexExistsError, QueryEmptyException, decode_error_code, IndexStatError, BucketStatsError,
+                         ClusterKVServiceError, ClusterHealthCheckError, ClusterInitError, ClusterQueryServiceError, ClusterViewServiceError)
 from .retries import retry
 import logging
 import asyncio
@@ -25,6 +28,7 @@ except ImportError:
     from couchbase.options import LockMode
 from couchbase.cluster import Cluster
 from couchbase.diagnostics import ServiceType, PingState
+from couchbase.exceptions import HTTPException
 
 
 class RunMode(Enum):
@@ -94,9 +98,6 @@ class cb_common(object):
         self.timeouts = ClusterTimeoutOptions(query_timeout=timedelta(seconds=30),
                                               kv_timeout=timedelta(seconds=30))
 
-        if 'CB_PERF_DEBUG_LEVEL' in os.environ:
-            couchbase.enable_logging()
-
         if self.ssl:
             self.prefix = "https://"
             self.cb_prefix = "couchbases://"
@@ -111,6 +112,12 @@ class cb_common(object):
             self.admin_port = "8091"
             self.node_port = "9102"
             self.options = ""
+
+        if external:
+            if self.ssl:
+                self.options += "&network=external"
+            else:
+                self.options += "?network=external"
 
     def construct_key(self, key):
         if type(key) == int or str(key).isdigit():
@@ -144,7 +151,9 @@ class cb_common(object):
 
     @property
     def cb_connect_string(self):
-        return self.cb_prefix + self.rally_host_name + self.options
+        connect_string = self.cb_prefix + self.rally_host_name + self.options
+        self.logger.debug(f"Connect string: {connect_string}")
+        return connect_string
 
     @property
     def cb_network(self):
@@ -210,6 +219,7 @@ class cb_common(object):
         cluster = Cluster(self.cb_connect_string, ClusterOptions(self.auth,
                                                                  timeout_options=self.timeouts,
                                                                  lockmode=LockMode.WAIT))
+        self.logger.debug(f"cluster {self.cb_connect_string} ping")
         ping_result = cluster.ping()
         for endpoint, reports in ping_result.endpoints.items():
             for report in reports:
@@ -219,7 +229,34 @@ class cb_common(object):
                     raise ClusterHealthCheckError(f"service {endpoint.value} not ok")
 
         node_set = set(nodes)
+        self.logger.debug("ping complete")
         return list(node_set)
+
+    @retry(factor=0.5)
+    def wait_for_query_ready(self):
+        query_str = r"SELECT 1 FROM system:dual;"
+        cluster = Cluster(self.cb_connect_string, ClusterOptions(self.auth,
+                                                                 timeout_options=self.timeouts,
+                                                                 lockmode=LockMode.WAIT))
+        result = cluster.query(query_str, QueryOptions(metrics=False, adhoc=True))
+        value = result.rows()[0].get('$1')
+        if value == 1:
+            return True
+        else:
+            return False
+
+    @retry(factor=0.5)
+    def wait_for_index_ready(self):
+        query_str = r"SELECT * FROM system:indexes;"
+        cluster = Cluster(self.cb_connect_string, ClusterOptions(self.auth,
+                                                                 timeout_options=self.timeouts,
+                                                                 lockmode=LockMode.WAIT))
+        result = cluster.query(query_str, QueryOptions(metrics=False, adhoc=True))
+        value = result.rows()
+        if len(value) >= 0:
+            return True
+        else:
+            return False
 
     def index_name(self, field):
         field = field.replace('.', '_')

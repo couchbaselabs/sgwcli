@@ -22,11 +22,12 @@ from couchbase.management.collections import CollectionSpec
 import couchbase.subdocument as SD
 from couchbase.exceptions import (CouchbaseException, QueryIndexNotFoundException,
                                   DocumentNotFoundException, DocumentExistsException, QueryIndexAlreadyExistsException,
-                                  BucketAlreadyExistsException,
+                                  BucketAlreadyExistsException, TimeoutException,
                                   BucketNotFoundException, WatchQueryIndexTimeoutException,
                                   ScopeAlreadyExistsException, CollectionAlreadyExistsException,
                                   CollectionNotFoundException)
 from itertools import cycle
+import json
 try:
     from couchbase.options import ClusterTimeoutOptions, QueryOptions, LockMode, ClusterOptions, WaitUntilReadyOptions, TLSVerifyMode
 except ImportError:
@@ -43,11 +44,18 @@ class cb_connect_s(cb_common):
         self._mode = RunMode.Sync.value
         self._mode_str = RunMode(self._mode).name
 
+    def __exit__(self):
+        self.disconnect()
+
     def init(self):
         try:
+            self.logger.debug("begin init")
             self.is_reachable()
+            self.logger.debug("cluster is reachable")
             self.connect()
+            self.logger.debug("cluster is connected")
             self.all_hosts = self.wait_until_ready()
+            self.logger.debug(f"hosts: {','.join(self.all_hosts)}")
 
             s = api_session(self.username, self.password)
             s.set_host(self.rally_cluster_node, self.ssl, self.admin_port)
@@ -58,6 +66,7 @@ class cb_connect_s(cb_common):
 
             self.node_cycle = cycle(self.all_hosts)
 
+            self.logger.debug("init complete")
             return self
         except ClusterHealthCheckError as err:
             print(f"Cluster not ready: {err}")
@@ -281,7 +290,7 @@ class cb_connect_s(cb_common):
         try:
             self.logger.debug(f"cb_query [{self._mode_str}]: running query: {query}")
             result = self._cluster.query(query, QueryOptions(metrics=False, adhoc=True))
-            for item in result.rows():
+            for item in result:
                 contents.append(item)
             if empty_retry:
                 if len(contents) == 0:
@@ -520,3 +529,8 @@ class cb_connect_s(cb_common):
     def delete_wait(self, field=None):
         if self.is_index(field=field):
             raise IndexNotReady(f"delete_wait: index still exists")
+
+    def disconnect(self):
+        if self._cluster:
+            self._cluster.close()
+            self._cluster = None
