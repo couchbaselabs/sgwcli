@@ -8,3 +8,4 @@ pytest-asyncio>=0.17.2
 pytest-rerunfailures>=10.2
 pytest-mock>=3.10
 attrs==19.3.0
+cbcmgr>=1.0.3

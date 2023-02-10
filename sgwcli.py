@@ -7,10 +7,10 @@ import os
 import traceback
 import warnings
 import logging
-from lib.httpsessionmgr import api_session
-from lib.httpexceptions import HTTPForbidden, HTTPNotImplemented
-from lib.cbsync import cb_connect_s
-from lib.retries import retry
+from cbcmgr.httpsessionmgr import APISession
+from cbcmgr.exceptions import HTTPForbidden, HTTPNotImplemented
+from cbcmgr.cb_connect import CBConnect
+from cbcmgr.retry import retry
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger()
@@ -39,7 +39,7 @@ class cb_interface(object):
         usernames = []
 
         try:
-            db = cb_connect_s(self.host, self.username, self.password, ssl=self.ssl).init()
+            db = CBConnect(self.host, self.username, self.password, ssl=self.ssl).connect()
             results = db.cb_query(sql=query)
             for record in results:
                 value = record[field]
@@ -50,7 +50,7 @@ class cb_interface(object):
             sys.exit(1)
 
 
-class sg_database(api_session):
+class sg_database(APISession):
 
     def __init__(self, node, *args, port=4985, ssl=0, **kwargs):
         super().__init__(*args, **kwargs)
@@ -164,7 +164,7 @@ class sg_database(api_session):
             sys.exit(1)
 
 
-class sg_user(api_session):
+class sg_user(APISession):
 
     def __init__(self, node, *args, port=4985, ssl=0, **kwargs):
         super().__init__(*args, **kwargs)
