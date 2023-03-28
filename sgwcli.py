@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 
-import argparse
 import sys
 import signal
 import os
 import traceback
 import warnings
 import logging
-from lib.httpsessionmgr import api_session
-from lib.httpexceptions import HTTPForbidden, HTTPNotImplemented
-from lib.cbsync import cb_connect_s
-from lib.retries import retry
+import inspect
+from lib.logging import CustomFormatter
+from lib.args import Parameters
+from cbcmgr.cb_connect import CBConnect
+from cbcmgr.httpsessionmgr import APISession
+from cbcmgr.exceptions import HTTPForbidden, HTTPNotImplemented
+from cbcmgr.retry import retry
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger()
+VERSION = '1.1'
 
 
 def break_signal_handler(signum, frame):
+    signal_name = signal.Signals(signum).name
+    (filename, line, function, lines, index) = inspect.getframeinfo(frame)
+    logger.debug(f"received break signal {signal_name} in {filename} {function} at line {line}")
     if 'SGW_CLI_DEBUG_LEVEL' in os.environ:
         if int(os.environ['SGW_CLI_DEBUG_LEVEL']) == 0:
             tb = traceback.format_exc()
@@ -26,7 +32,7 @@ def break_signal_handler(signum, frame):
     sys.exit(1)
 
 
-class cb_interface(object):
+class CBSInterface(object):
 
     def __init__(self, hostname, username, password, ssl=True):
         self.host = hostname
@@ -39,7 +45,7 @@ class cb_interface(object):
         usernames = []
 
         try:
-            db = cb_connect_s(self.host, self.username, self.password, ssl=self.ssl).init()
+            db = CBConnect(self.host, self.username, self.password, ssl=self.ssl).connect()
             results = db.cb_query(sql=query)
             for record in results:
                 value = record[field]
@@ -50,7 +56,7 @@ class cb_interface(object):
             sys.exit(1)
 
 
-class sg_database(api_session):
+class SGWDatabase(APISession):
 
     def __init__(self, node, *args, port=4985, ssl=0, **kwargs):
         super().__init__(*args, **kwargs)
@@ -66,7 +72,7 @@ class sg_database(api_session):
             "num_index_replicas": replicas
         }
         try:
-            response = self.api_put(f"/{name}/", data)
+            self.api_put(f"/{name}/", data)
             print(f"Database {name} created for bucket {bucket}.")
         except HTTPForbidden:
             print(f"Bucket {bucket} does not exist.")
@@ -77,7 +83,7 @@ class sg_database(api_session):
 
     def delete(self, name):
         try:
-            response = self.api_delete(f"/{name}/")
+            self.api_delete(f"/{name}/")
             print(f"Database {name} deleted.")
         except HTTPForbidden:
             print(f"Database {name} does not exist.")
@@ -91,7 +97,7 @@ class sg_database(api_session):
             data = file.read()
             file.close()
             try:
-                response = self.api_put_data(f"/{name}/_config/sync", data, 'application/javascript')
+                self.api_put_data(f"/{name}/_config/sync", data, 'application/javascript')
                 print(f"Sync function created for database {name}.")
             except HTTPForbidden:
                 print(f"Database {name} does not exist.")
@@ -113,8 +119,8 @@ class sg_database(api_session):
 
     def resync(self, name):
         try:
-            response = self.api_post(f"/{name}/_offline", None)
-            response = self.api_post(f"/{name}/_resync", None)
+            self.api_post(f"/{name}/_offline", None)
+            self.api_post(f"/{name}/_resync", None)
             print("Waiting for resync to complete")
             self.resync_wait(name)
             print("Resync complete")
@@ -127,7 +133,7 @@ class sg_database(api_session):
 
     @retry(factor=0.5, retry_count=20)
     def resync_wait(self, name):
-        response = self.api_post(f"/{name}/_online", None)
+        self.api_post(f"/{name}/_online", None)
 
     def list(self, name):
         try:
@@ -144,7 +150,7 @@ class sg_database(api_session):
 
     @retry(factor=0.5, retry_count=20)
     def ready_wait(self, name):
-        response = self.api_get(f"/{name}/_config").json()
+        self.api_get(f"/{name}/_config").json()
 
     def dump(self, name):
         try:
@@ -164,7 +170,7 @@ class sg_database(api_session):
             sys.exit(1)
 
 
-class sg_user(api_session):
+class SGWUser(APISession):
 
     def __init__(self, node, *args, port=4985, ssl=0, **kwargs):
         super().__init__(*args, **kwargs)
@@ -182,7 +188,7 @@ class sg_user(api_session):
             "disabled": False
         }
         try:
-            response = self.api_put(f"/{dbname}/_user/{username}", data)
+            self.api_put(f"/{dbname}/_user/{username}", data)
             print(f"User {username} created for database {dbname}.")
         except HTTPForbidden:
             print(f"Database {dbname} does not exist.")
@@ -193,7 +199,7 @@ class sg_user(api_session):
 
     def delete(self, name, username):
         try:
-            response = self.api_delete(f"/{name}/_user/{username}")
+            self.api_delete(f"/{name}/_user/{username}")
             print(f"User {username} deleted from {name}.")
         except HTTPForbidden:
             print(f"Database {name} does not exist.")
@@ -229,117 +235,93 @@ class sg_user(api_session):
             sys.exit(1)
 
 
+class RunMain(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def run(parameters):
+        logger.info(f"Sync Gateway CLI ({VERSION})")
+
+        if parameters.command == 'version':
+            sys.exit(0)
+
+        if parameters.command == 'database':
+            sgdb = SGWDatabase(parameters.host, parameters.user, parameters.password)
+            if parameters.db_command == "create":
+                if not parameters.name:
+                    parameters.name = parameters.bucket
+                sgdb.create(parameters.bucket, parameters.name, parameters.replicas)
+            elif parameters.db_command == "delete":
+                sgdb.delete(parameters.name)
+            elif parameters.db_command == "sync":
+                if parameters.get:
+                    sgdb.get_sync_fun(parameters.name)
+                else:
+                    sgdb.sync_fun(parameters.name, parameters.function)
+                    sgdb.resync(parameters.name)
+            elif parameters.db_command == 'resync':
+                sgdb.resync(parameters.name)
+            elif parameters.db_command == "list":
+                sgdb.list(parameters.name)
+            elif parameters.db_command == "dump":
+                sgdb.dump(parameters.name)
+            elif parameters.db_command == "wait":
+                sgdb.ready_wait(parameters.name)
+        elif parameters.command == 'user':
+            sguser = SGWUser(parameters.host, parameters.user, parameters.password)
+            if parameters.user_command == "create":
+                sguser.create(parameters.name, parameters.sguser, parameters.sgpass)
+            elif parameters.user_command == "delete":
+                sguser.delete(parameters.name, parameters.sguser)
+            elif parameters.user_command == "list":
+                if parameters.all:
+                    sguser.list(parameters.name)
+                else:
+                    sguser.list(parameters.name, parameters.sguser)
+            elif parameters.user_command == "map":
+                dbuser = parameters.dblogin.split(':')[0]
+                dbpass = parameters.dblogin.split(':')[1]
+                cbdb = CBSInterface(parameters.dbhost, dbuser, dbpass)
+                usernames = cbdb.get_values(parameters.field, parameters.keyspace)
+                for username in usernames:
+                    sguser.create(parameters.name, username, parameters.sgpass, channels=f"channel.{username}")
+
+
 def main():
     global logger
     signal.signal(signal.SIGINT, break_signal_handler)
     default_debug_file = 'debug.log'
     debug_file = os.environ.get("SGW_CLI_DEBUG_FILE", default_debug_file)
-
-    parent_parser = argparse.ArgumentParser(add_help=False)
-    parent_parser.add_argument('-u', '--user', action='store', help="User Name", default="Administrator")
-    parent_parser.add_argument('-p', '--password', action='store', help="User Password", default="password")
-    parent_parser.add_argument('-h', '--host', action='store', help="Sync Gateway Hostname", default="localhost")
-    parent_parser.add_argument('--help', action='help', default=argparse.SUPPRESS, help='Show help message')
-    db_parser = argparse.ArgumentParser(add_help=False)
-    db_parser.add_argument('-b', '--bucket', action='store', help='Bucket name')
-    db_parser.add_argument('-n', '--name', action='store', help='Database name')
-    db_parser.add_argument('-f', '--function', action='store', help='Sync Function')
-    db_parser.add_argument('-r', '--replicas', action='store', help='Replica count', type=int, default=0)
-    db_parser.add_argument('-g', '--get', action='store_true', help='Get Sync Function')
-    user_parser = argparse.ArgumentParser(add_help=False)
-    user_parser.add_argument('-n', '--name', action='store', help='Database name')
-    user_parser.add_argument('-U', '--sguser', action='store', help='SGW user name', default="sguser")
-    user_parser.add_argument('-P', '--sgpass', action='store',  help='SGW user password', default="password")
-    user_parser.add_argument('-d', '--dbhost', action='store', help='Couchbase hostname', default="localhost")
-    user_parser.add_argument('-l', '--dblogin', action='store', help='Couchbase credentials', default="Administrator:password")
-    user_parser.add_argument('-f', '--field', action='store', help='Document field')
-    user_parser.add_argument('-k', '--keyspace', action='store', help='Keyspace')
-    user_parser.add_argument('-a', '--all', action='store_true', help='List all users')
-    main_parser = argparse.ArgumentParser(add_help=False)
-    main_parser.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='Show help message')
-    subparser = main_parser.add_subparsers(dest='command')
-    db_mode = subparser.add_parser('database', help="Database Operations", parents=[parent_parser, db_parser], add_help=False)
-    db_sub_mode = db_mode.add_subparsers(dest='db_command')
-    db_sub_mode.add_parser('create', help="Create Database", parents=[parent_parser, db_parser], add_help=False)
-    db_sub_mode.add_parser('delete', help="Delete Database", parents=[parent_parser, db_parser], add_help=False)
-    db_sub_mode.add_parser('sync', help="Add Sync Function", parents=[parent_parser, db_parser], add_help=False)
-    db_sub_mode.add_parser('resync', help="Sync Documents", parents=[parent_parser, db_parser], add_help=False)
-    db_sub_mode.add_parser('list', help="List Databases", parents=[parent_parser, db_parser], add_help=False)
-    db_sub_mode.add_parser('dump', help="Dump Databases", parents=[parent_parser, db_parser], add_help=False)
-    db_sub_mode.add_parser('wait', help="Wait For Database Online", parents=[parent_parser, db_parser], add_help=False)
-    user_mode = subparser.add_parser('user', help="User Operations", parents=[parent_parser, user_parser], add_help=False)
-    user_sub_mode = user_mode.add_subparsers(dest='user_command')
-    user_sub_mode.add_parser('create', help="Add User", parents=[parent_parser, user_parser], add_help=False)
-    user_sub_mode.add_parser('delete', help="Delete User", parents=[parent_parser, user_parser], add_help=False)
-    user_sub_mode.add_parser('list', help="List Users", parents=[parent_parser, user_parser], add_help=False)
-    user_sub_mode.add_parser('map', help="Map values to users", parents=[parent_parser, user_parser], add_help=False)
-    parameters = main_parser.parse_args()
+    arg_parser = Parameters()
+    parameters = arg_parser.args
 
     try:
-        open(debug_file, 'w').close()
-    except Exception as err:
-        print(f"[!] Warning: can not clear log file {debug_file}: {err}")
+        if parameters.debug:
+            logger.setLevel(logging.DEBUG)
 
-    handler = logging.FileHandler(debug_file)
-    formatter = logging.Formatter(logging.BASIC_FORMAT)
-    handler.setFormatter(formatter)
+            try:
+                open(debug_file, 'w').close()
+            except Exception as err:
+                print(f"[!] Warning: can not clear log file {debug_file}: {err}")
 
-    try:
-        debug_level = int(os.environ['SGW_CLI_DEBUG_LEVEL'])
+            file_handler = logging.FileHandler(debug_file)
+            file_formatter = logging.Formatter(logging.BASIC_FORMAT)
+            file_handler.setFormatter(file_formatter)
+            logger.addHandler(file_handler)
+        elif parameters.verbose or parameters.command == 'version':
+            logger.setLevel(logging.INFO)
+        else:
+            logger.setLevel(logging.ERROR)
     except (ValueError, KeyError):
-        debug_level = 2
+        pass
 
-    if debug_level == 0:
-        logger.setLevel(logging.DEBUG)
-    elif debug_level == 1:
-        logger.setLevel(logging.INFO)
-    elif debug_level == 2:
-        logger.setLevel(logging.ERROR)
-    else:
-        logger.setLevel(logging.CRITICAL)
+    screen_handler = logging.StreamHandler()
+    screen_handler.setFormatter(CustomFormatter())
+    logger.addHandler(screen_handler)
 
-    logger.addHandler(handler)
-
-    if parameters.command == 'database':
-        sgdb = sg_database(parameters.host, parameters.user, parameters.password)
-        if parameters.db_command == "create":
-            if not parameters.name:
-                parameters.name = parameters.bucket
-            sgdb.create(parameters.bucket, parameters.name, parameters.replicas)
-        elif parameters.db_command == "delete":
-            sgdb.delete(parameters.name)
-        elif parameters.db_command == "sync":
-            if parameters.get:
-                sgdb.get_sync_fun(parameters.name)
-            else:
-                sgdb.sync_fun(parameters.name, parameters.function)
-                sgdb.resync(parameters.name)
-        elif parameters.db_command == 'resync':
-            sgdb.resync(parameters.name)
-        elif parameters.db_command == "list":
-            sgdb.list(parameters.name)
-        elif parameters.db_command == "dump":
-            sgdb.dump(parameters.name)
-        elif parameters.db_command == "wait":
-            sgdb.ready_wait(parameters.name)
-    elif parameters.command == 'user':
-        sguser = sg_user(parameters.host, parameters.user, parameters.password)
-        if parameters.user_command == "create":
-            sguser.create(parameters.name, parameters.sguser, parameters.sgpass)
-        elif parameters.user_command == "delete":
-            sguser.delete(parameters.name, parameters.sguser)
-        elif parameters.user_command == "list":
-            if parameters.all:
-                sguser.list(parameters.name)
-            else:
-                sguser.list(parameters.name, parameters.sguser)
-        elif parameters.user_command == "map":
-            dbuser = parameters.dblogin.split(':')[0]
-            dbpass = parameters.dblogin.split(':')[1]
-            cbdb = cb_interface(parameters.dbhost, dbuser, dbpass)
-            usernames = cbdb.get_values(parameters.field, parameters.keyspace)
-            for username in usernames:
-                sguser.create(parameters.name, username, parameters.sgpass, channels=f"channel.{username}")
+    RunMain().run(parameters)
 
 
 if __name__ == '__main__':

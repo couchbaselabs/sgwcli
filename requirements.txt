@@ -1,5 +1,4 @@
 requests>=2.27.1
-couchbase==3.2.7
 urllib3==1.26.7
 dnspython==2.1.0
 docker>=6.0.0
@@ -8,3 +7,4 @@ pytest-asyncio>=0.17.2
 pytest-rerunfailures>=10.2
 pytest-mock>=3.10
 attrs==19.3.0
+cbcmgr==1.1.8
