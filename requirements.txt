@@ -1,10 +1,10 @@
-requests>=2.27.1
-urllib3==1.26.7
-dnspython==2.1.0
+requests==2.29.0
+urllib3==1.26.15
+dnspython==2.3.0
 docker>=6.0.0
-pytest>=7.2.0
+pytest==7.3.1
 pytest-asyncio>=0.17.2
 pytest-rerunfailures>=10.2
 pytest-mock>=3.10
-attrs==19.3.0
-cbcmgr==1.1.8
+attrs==23.1.0
+cbcmgr==1.2.0

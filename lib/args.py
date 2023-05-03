@@ -48,6 +48,9 @@ class Parameters(object):
         user_sub_mode.add_parser('delete', help="Delete User", parents=[parent_parser, user_parser], add_help=False)
         user_sub_mode.add_parser('list', help="List Users", parents=[parent_parser, user_parser], add_help=False)
         user_sub_mode.add_parser('map', help="Map values to users", parents=[parent_parser, user_parser], add_help=False)
+        auth_mode = subparser.add_parser('auth', help="Auth Operations", parents=[parent_parser, user_parser], add_help=False)
+        auth_sub_mode = auth_mode.add_subparsers(dest='auth_command')
+        auth_sub_mode.add_parser('session', help="Get Session", parents=[parent_parser, user_parser], add_help=False)
         self.parameters = main_parser.parse_args()
 
     @property

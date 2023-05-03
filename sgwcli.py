@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+import json
 import sys
 import signal
 import os
@@ -7,16 +7,19 @@ import traceback
 import warnings
 import logging
 import inspect
+import re
 from lib.logging import CustomFormatter
 from lib.args import Parameters
 from cbcmgr.cb_connect import CBConnect
+from cbcmgr.cb_management import CBManager
 from cbcmgr.httpsessionmgr import APISession
 from cbcmgr.exceptions import HTTPForbidden, HTTPNotImplemented
 from cbcmgr.retry import retry
+from cbcmgr.schema import ProcessSchema, Schema
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger()
-VERSION = '1.1'
+VERSION = '2.0'
 
 
 def break_signal_handler(signum, frame):
@@ -40,20 +43,52 @@ class CBSInterface(object):
         self.password = password
         self.ssl = ssl
 
-    def get_values(self, field, keyspace):
-        query = f"select distinct {field} from {keyspace} where {field} is not missing;"
-        usernames = []
+    def import_schema(self, bucket: str) -> Schema:
+        dbm = CBManager(self.host, self.username, self.password, ssl=self.ssl)
+        contents = dbm.cluster_schema_dump()
+        inventory = ProcessSchema(json_data=contents).inventory()
+        return inventory.get(bucket)
 
-        try:
-            db = CBConnect(self.host, self.username, self.password, ssl=self.ssl).connect()
-            results = db.cb_query(sql=query)
-            for record in results:
-                value = record[field]
-                usernames.append(f"{field}@{value}")
-            return usernames
-        except Exception as err:
-            print(f"Can not get the values for {field}: {err}")
-            sys.exit(1)
+    def keyspace_list(self, keyspace: str) -> list[str]:
+        collection_list = []
+        elements = keyspace.split('.')
+        if len(elements) < 3:
+            elements.append(r".*")
+        if len(elements) < 3:
+            elements.append(r".*")
+
+        schema = self.import_schema(elements[0])
+
+        for bucket in schema.buckets:
+            for scope in bucket.scopes:
+                if not re.match(f"^{elements[1]}$", scope.name):
+                    continue
+                for collection in scope.collections:
+                    if not re.match(f"^{elements[2]}$", collection.name):
+                        continue
+                    collection_list.append('.'.join([bucket.name, scope.name, collection.name]))
+
+        return collection_list
+
+    def get_values(self, field, keyspace):
+        usernames = []
+        collection_list = self.keyspace_list(keyspace)
+        db = CBConnect(self.host, self.username, self.password, ssl=self.ssl).connect()
+
+        for collection in collection_list:
+            query = f"select distinct {field} from {collection} where {field} is not missing;"
+            try:
+                results = db.cb_query(sql=query)
+                if not results:
+                    continue
+                for record in results:
+                    value = record[field]
+                    usernames.append(f"{field}@{value}")
+            except Exception as err:
+                print(f"Can not get the values for {field}: {err}")
+                sys.exit(1)
+
+        return list(set(usernames))
 
 
 class SGWDatabase(APISession):
@@ -235,6 +270,21 @@ class SGWUser(APISession):
             sys.exit(1)
 
 
+class SGWAuth(APISession):
+
+    def __init__(self, node, *args, port=4985, ssl=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hostname = node
+        self.set_host(node, ssl, port)
+
+    def get_session(self, name, user):
+        data = {
+            "name": user
+        }
+        response = self.api_post(f"/{name}/_session", data)
+        print(json.dumps(response.response, indent=2))
+
+
 class RunMain(object):
 
     def __init__(self):
@@ -287,6 +337,10 @@ class RunMain(object):
                 usernames = cbdb.get_values(parameters.field, parameters.keyspace)
                 for username in usernames:
                     sguser.create(parameters.name, username, parameters.sgpass, channels=f"channel.{username}")
+        elif parameters.command == 'auth':
+            sgauth = SGWAuth(parameters.host, parameters.user, parameters.password)
+            if parameters.auth_command == "session":
+                sgauth.get_session(parameters.name, parameters.sguser)
 
 
 def main():

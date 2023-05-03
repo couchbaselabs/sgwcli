@@ -1,6 +1,5 @@
 import pytest
 import docker
-import time
 
 
 def pytest_addoption(parser):
@@ -62,7 +61,7 @@ def pytest_sessionstart(session):
             break
 
     print("Waiting for Couchbase Server to be ready")
-    exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/cb_perf',
+    exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/bin/cb_perf',
                                                'list',
                                                '--host', '127.0.0.1',
                                                '--wait'])
@@ -72,7 +71,7 @@ def pytest_sessionstart(session):
     assert exit_code == 0
 
     print("Creating test bucket and loading data")
-    exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/cb_perf',
+    exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/bin/cb_perf',
                                                'load',
                                                '--host', '127.0.0.1',
                                                '--count', '30',
