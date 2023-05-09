@@ -282,7 +282,7 @@ class SGWAuth(APISession):
             "name": user
         }
         response = self.api_post(f"/{name}/_session", data)
-        print(json.dumps(response.response, indent=2))
+        print(json.dumps(json.loads(response.response), indent=2))
 
 
 class RunMain(object):
