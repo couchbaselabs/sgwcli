@@ -70,15 +70,25 @@ def pytest_sessionstart(session):
         print(line.decode("utf-8"))
     assert exit_code == 0
 
-    print("Creating test bucket and loading data")
+    print("Creating test buckets and loading data")
     exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/bin/cb_perf',
                                                'load',
                                                '--host', '127.0.0.1',
                                                '--count', '30',
                                                '--schema', 'employee_demo',
                                                '--replica', '0',
-                                               '--safe'])
-
+                                               '--safe',
+                                               '--quota', '128'])
+    for line in output.split(b'\n'):
+        print(line.decode("utf-8"))
+    assert exit_code == 0
+    exit_code, output = container_id.exec_run(['/demo/couchbase/cbperf/bin/cb_perf',
+                                               'load',
+                                               '--host', '127.0.0.1',
+                                               '--schema', 'insurance_sample',
+                                               '--replica', '0',
+                                               '--safe',
+                                               '--quota', '128'])
     for line in output.split(b'\n'):
         print(line.decode("utf-8"))
     assert exit_code == 0

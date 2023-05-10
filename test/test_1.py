@@ -194,3 +194,57 @@ def test_cli_14(hostname, bucket):
     assert p.match(output) is not None
     assert result == 0
 
+
+def test_cli_15(hostname, bucket):
+    global parent
+    cmd = parent + '/sgwcli'
+    args = ['database', 'create', '-h', hostname, '-n', 'insurance', '-b', 'insurance_sample', '-k', 'insurance_sample.data']
+
+    result, output = cli_run(cmd, *args)
+    p = re.compile(f"^Database insurance created.*$")
+    assert p.match(output) is not None
+    assert result == 0
+
+
+def test_cli_16(hostname, bucket):
+    global parent
+    cmd = parent + '/sgwcli'
+    args = ['user', 'map', '-h', hostname, '-d', hostname, '-f', 'region', '-k', 'insurance_sample', '-n', 'insurance']
+
+    result, output = cli_run(cmd, *args)
+    p = re.compile(r"^.*User region@global created for database insurance.*$")
+    assert p.findall(output) is not None
+    assert result == 0
+
+
+def test_cli_17(hostname, bucket):
+    global parent
+    cmd = parent + '/sgwcli'
+    args = ['database', 'sync', '-h', hostname, '-n', 'insurance', '-f', parent + '/test/insurance.js']
+
+    result, output = cli_run(cmd, *args)
+    p = re.compile(f"^Sync function created for database insurance.data.adjuster.*$")
+    assert p.findall(output) is not None
+    assert result == 0
+
+
+def test_cli_18(hostname, bucket):
+    global parent
+    cmd = parent + '/sgwcli'
+    args = ['auth', 'session', '-h', hostname, '-n', 'insurance', '-U', 'region@central']
+
+    result, output = cli_run(cmd, *args)
+    p = re.compile(f"^.*cookie_name.*SyncGatewaySession.*$")
+    assert p.findall(output) is not None
+    assert result == 0
+
+
+def test_cli_19(hostname, bucket):
+    global parent
+    cmd = parent + '/sgwcli'
+    args = ['database', 'delete', '-h', hostname, '-n', "insurance"]
+
+    result, output = cli_run(cmd, *args)
+    p = re.compile(f"^Database insurance deleted.*$")
+    assert p.match(output) is not None
+    assert result == 0

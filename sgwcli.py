@@ -9,6 +9,7 @@ import logging
 import inspect
 import re
 from lib.logging import CustomFormatter
+from typing import Tuple
 from lib.args import Parameters
 from cbcmgr.cb_connect import CBConnect
 from cbcmgr.cb_management import CBManager
@@ -19,7 +20,7 @@ from cbcmgr.schema import ProcessSchema, Schema
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger()
-VERSION = '2.0'
+VERSION = '2.0.1'
 
 
 def break_signal_handler(signum, frame):
@@ -49,8 +50,18 @@ class CBSInterface(object):
         inventory = ProcessSchema(json_data=contents).inventory()
         return inventory.get(bucket)
 
-    def keyspace_list(self, keyspace: str) -> list[str]:
+    def merge(self, src: dict, dst: dict):
+        for key in src:
+            if key in dst:
+                if isinstance(src[key], dict) and isinstance(dst[key], dict):
+                    dst[key] = self.merge(src[key], dst[key])
+                    continue
+            dst[key] = src[key]
+        return dst
+
+    def keyspace_list(self, keyspace: str) -> Tuple[list[str], dict]:
         collection_list = []
+        scope_struct = {}
         elements = keyspace.split('.')
         if len(elements) < 3:
             elements.append(r".*")
@@ -61,18 +72,33 @@ class CBSInterface(object):
 
         for bucket in schema.buckets:
             for scope in bucket.scopes:
-                if not re.match(f"^{elements[1]}$", scope.name):
+                if not re.match(f"^{elements[1]}$", scope.name) or scope.name == '_default':
                     continue
                 for collection in scope.collections:
-                    if not re.match(f"^{elements[2]}$", collection.name):
+                    if not re.match(f"^{elements[2]}$", collection.name) or collection.name == '_default':
                         continue
-                    collection_list.append('.'.join([bucket.name, scope.name, collection.name]))
+                    keyspace_string = '.'.join([bucket.name, scope.name, collection.name])
+                    logger.debug(f"Adding keyspace {keyspace_string}")
+                    collection_list.append(keyspace_string)
+                    add_struct = {
+                        "scopes": {
+                            scope.name: {
+                                "collections": {
+                                    collection.name: {}
+                                }
+                            }
+                        }
+                    }
+                    scope_struct = self.merge(add_struct, scope_struct)
 
-        return collection_list
+        if len(collection_list) == 0:
+            collection_list.append(elements[0])
 
-    def get_values(self, field, keyspace):
+        return collection_list, scope_struct
+
+    def get_users_by_field(self, field, keyspace):
         usernames = []
-        collection_list = self.keyspace_list(keyspace)
+        collection_list, _ = self.keyspace_list(keyspace)
         db = CBConnect(self.host, self.username, self.password, ssl=self.ssl).connect()
 
         for collection in collection_list:
@@ -98,7 +124,7 @@ class SGWDatabase(APISession):
         self.hostname = node
         self.set_host(node, ssl, port)
 
-    def create(self, bucket, name, replicas=0):
+    def create(self, bucket, name, replicas: int = 0, keyspace_struct: dict = None):
         data = {
             "import_docs": True,
             "enable_shared_bucket_access": True,
@@ -106,6 +132,12 @@ class SGWDatabase(APISession):
             "name": name,
             "num_index_replicas": replicas
         }
+
+        if keyspace_struct:
+            data.update(keyspace_struct)
+
+        logger.debug(f"Database create POST data: {json.dumps(data)}")
+
         try:
             self.api_put(f"/{name}/", data)
             print(f"Database {name} created for bucket {bucket}.")
@@ -127,19 +159,37 @@ class SGWDatabase(APISession):
             print(f"Database delete failed for {name}: {err}")
             sys.exit(1)
 
+    def expand_name(self, name) -> list[str]:
+        if len(name.split('.')) != 1:
+            return [name]
+
+        response = self.api_get(f"/{name}/_config").json()
+        if 'scopes' in response:
+            keyspace_list = []
+            for key in response['scopes']:
+                prefix = f"{name}.{key}."
+                for collection in response['scopes'][key].get('collections', {}).keys():
+                    keyspace_list.append(f"{prefix}{collection}")
+            return keyspace_list
+        else:
+            return [name]
+
     def sync_fun(self, name, filename):
+        keyspace_list = self.expand_name(name)
+
         with open(filename, "r") as file:
             data = file.read()
             file.close()
-            try:
-                self.api_put_data(f"/{name}/_config/sync", data, 'application/javascript')
-                print(f"Sync function created for database {name}.")
-            except HTTPForbidden:
-                print(f"Database {name} does not exist.")
-                sys.exit(1)
-            except Exception as err:
-                print(f"Sync function create failed for database {name}: {err}")
-                sys.exit(1)
+            for keyspace in keyspace_list:
+                try:
+                    self.api_put_data(f"/{keyspace}/_config/sync", data, 'application/javascript')
+                    print(f"Sync function created for database {keyspace}.")
+                except HTTPForbidden:
+                    print(f"Database {keyspace} does not exist.")
+                    sys.exit(1)
+                except Exception as err:
+                    print(f"Sync function create failed for database {keyspace}: {err}")
+                    sys.exit(1)
 
     def get_sync_fun(self, name):
         try:
@@ -176,11 +226,23 @@ class SGWDatabase(APISession):
             print(f"Bucket:   {response['bucket']}")
             print(f"Name:     {response['name']}")
             print(f"Replicas: {response['num_index_replicas']}")
+            if 'scopes' in response:
+                print("Scopes:")
+                print(json.dumps(response['scopes'], indent=2))
         except HTTPForbidden:
             print(f"Database {name} does not exist.")
             sys.exit(1)
         except Exception as err:
             print(f"Database list failed for {name}: {err}")
+            sys.exit(1)
+
+    def list_all(self):
+        try:
+            response = self.api_get("/_all_dbs").json()
+            for database in response:
+                print(database)
+        except Exception as err:
+            print(f"Database list failed: {err}")
             sys.exit(1)
 
     @retry(factor=0.5, retry_count=20)
@@ -188,21 +250,25 @@ class SGWDatabase(APISession):
         self.api_get(f"/{name}/_config").json()
 
     def dump(self, name):
-        try:
-            response = self.api_get(f"/{name}/_all_docs").json()
-            for item in response["rows"]:
-                document = self.api_get(f"/{name}/_raw/{item['id']}").json()
-                sequence = document['_sync']['sequence']
-                offset = document['_sync']['recent_sequences'].index(sequence)
-                print(f"Key: {item['key']} "
-                      f"Id: {item['id']} "
-                      f"Channels: {document['_sync']['history']['channels'][offset]}")
-        except HTTPForbidden:
-            print(f"Database {name} does not exist.")
-            sys.exit(1)
-        except Exception as err:
-            print(f"Database list failed for {name}: {err}")
-            sys.exit(1)
+        keyspace_list = self.expand_name(name)
+
+        for keyspace in keyspace_list:
+            print(f"Keyspace {keyspace}:")
+            try:
+                response = self.api_get(f"/{keyspace}/_all_docs").json()
+                for item in response["rows"]:
+                    document = self.api_get(f"/{keyspace}/_raw/{item['id']}").json()
+                    sequence = document['_sync']['sequence']
+                    offset = document['_sync']['recent_sequences'].index(sequence)
+                    print(f"Key: {item['key']} "
+                          f"Id: {item['id']} "
+                          f"Channels: {document['_sync']['history']['channels'][offset]}")
+            except HTTPForbidden:
+                print(f"Database {keyspace} does not exist.")
+                sys.exit(1)
+            except Exception as err:
+                print(f"Database list failed for {keyspace}: {err}")
+                sys.exit(1)
 
 
 class SGWUser(APISession):
@@ -285,6 +351,27 @@ class SGWAuth(APISession):
         print(json.dumps(json.loads(response.response), indent=2))
 
 
+class SGWServer(APISession):
+
+    def __init__(self, node, *args, port=4985, ssl=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hostname = node
+        self.set_host(node, ssl, port)
+
+    def get_info(self):
+        response = self.api_get("/").json()
+        return response
+
+    def print_info(self):
+        info = self.get_info()
+        if info.get('version'):
+            name, version = info.get('version').split('/')[0:2]
+            version = version.split('(', 1)[0]
+            print(f"{name} {version}")
+        else:
+            print("Can not get server information")
+
+
 class RunMain(object):
 
     def __init__(self):
@@ -293,6 +380,7 @@ class RunMain(object):
     @staticmethod
     def run(parameters):
         logger.info(f"Sync Gateway CLI ({VERSION})")
+        keyspace_struct = None
 
         if parameters.command == 'version':
             sys.exit(0)
@@ -302,7 +390,10 @@ class RunMain(object):
             if parameters.db_command == "create":
                 if not parameters.name:
                     parameters.name = parameters.bucket
-                sgdb.create(parameters.bucket, parameters.name, parameters.replicas)
+                if parameters.keyspace:
+                    cbdb = CBSInterface(parameters.dbhost, parameters.dbuser, parameters.dbpass)
+                    _, keyspace_struct = cbdb.keyspace_list(parameters.keyspace)
+                sgdb.create(parameters.bucket, parameters.name, parameters.replicas, keyspace_struct)
             elif parameters.db_command == "delete":
                 sgdb.delete(parameters.name)
             elif parameters.db_command == "sync":
@@ -314,7 +405,10 @@ class RunMain(object):
             elif parameters.db_command == 'resync':
                 sgdb.resync(parameters.name)
             elif parameters.db_command == "list":
-                sgdb.list(parameters.name)
+                if parameters.name:
+                    sgdb.list(parameters.name)
+                else:
+                    sgdb.list_all()
             elif parameters.db_command == "dump":
                 sgdb.dump(parameters.name)
             elif parameters.db_command == "wait":
@@ -331,16 +425,18 @@ class RunMain(object):
                 else:
                     sguser.list(parameters.name, parameters.sguser)
             elif parameters.user_command == "map":
-                dbuser = parameters.dblogin.split(':')[0]
-                dbpass = parameters.dblogin.split(':')[1]
-                cbdb = CBSInterface(parameters.dbhost, dbuser, dbpass)
-                usernames = cbdb.get_values(parameters.field, parameters.keyspace)
+                cbdb = CBSInterface(parameters.dbhost, parameters.dbuser, parameters.dbpass)
+                usernames = cbdb.get_users_by_field(parameters.field, parameters.keyspace)
                 for username in usernames:
                     sguser.create(parameters.name, username, parameters.sgpass, channels=f"channel.{username}")
         elif parameters.command == 'auth':
             sgauth = SGWAuth(parameters.host, parameters.user, parameters.password)
             if parameters.auth_command == "session":
                 sgauth.get_session(parameters.name, parameters.sguser)
+        elif parameters.command == 'server':
+            sgserver = SGWServer(parameters.host, parameters.user, parameters.password)
+            if parameters.server_command == "info":
+                sgserver.print_info()
 
 
 def main():
