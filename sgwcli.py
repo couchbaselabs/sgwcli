@@ -14,13 +14,14 @@ from lib.args import Parameters
 from cbcmgr.cb_connect import CBConnect
 from cbcmgr.cb_management import CBManager
 from cbcmgr.httpsessionmgr import APISession
-from cbcmgr.exceptions import HTTPForbidden, HTTPNotImplemented
+from cbcmgr.exceptions import HTTPForbidden, HTTPNotImplemented, PreconditionFailed, ConflictException
 from cbcmgr.retry import retry
 from cbcmgr.schema import ProcessSchema, Schema
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger()
-VERSION = '2.0.1'
+ignore_errors = False
+VERSION = '2.0.2'
 
 
 def break_signal_handler(signum, frame):
@@ -144,6 +145,10 @@ class SGWDatabase(APISession):
         except HTTPForbidden:
             print(f"Bucket {bucket} does not exist.")
             sys.exit(1)
+        except PreconditionFailed:
+            print(f"Database {name} already exists.")
+            if not ignore_errors:
+                sys.exit(1)
         except Exception as err:
             print(f"Database create failed for bucket {bucket}: {err}")
             sys.exit(1)
@@ -294,6 +299,10 @@ class SGWUser(APISession):
         except HTTPForbidden:
             print(f"Database {dbname} does not exist.")
             sys.exit(1)
+        except ConflictException:
+            print(f"User {username} already exists.")
+            if not ignore_errors:
+                sys.exit(1)
         except Exception as err:
             print(f"User create failed for database {dbname}: {err}")
             sys.exit(1)
@@ -440,7 +449,7 @@ class RunMain(object):
 
 
 def main():
-    global logger
+    global logger, ignore_errors
     signal.signal(signal.SIGINT, break_signal_handler)
     default_debug_file = 'debug.log'
     debug_file = os.environ.get("SGW_CLI_DEBUG_FILE", default_debug_file)
@@ -470,6 +479,9 @@ def main():
     screen_handler = logging.StreamHandler()
     screen_handler.setFormatter(CustomFormatter())
     logger.addHandler(screen_handler)
+
+    if parameters.ignore:
+        ignore_errors = True
 
     RunMain().run(parameters)
 

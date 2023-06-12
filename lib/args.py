@@ -20,6 +20,7 @@ class Parameters(object):
         parent_parser.add_argument('--help', action='help', default=argparse.SUPPRESS, help='Show help message')
         parent_parser.add_argument('-D', '--debug', action='store_true', help="Debug output")
         parent_parser.add_argument('-v', '--verbose', action='store_true', help="Verbose output")
+        parent_parser.add_argument('-i', '--ignore', action='store_true', help="Ignore errors")
         db_parser = argparse.ArgumentParser(add_help=False)
         db_parser.add_argument('-n', '--name', action='store', help='Database name')
         db_parser.add_argument('-f', '--function', action='store', help='Sync Function')
