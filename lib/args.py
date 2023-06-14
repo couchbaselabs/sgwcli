@@ -11,6 +11,7 @@ class Parameters(object):
         parent_parser.add_argument('-u', '--user', action='store', help="User Name", default="Administrator")
         parent_parser.add_argument('-p', '--password', action='store', help="User Password", default="password")
         parent_parser.add_argument('-h', '--host', action='store', help="Sync Gateway Hostname", default="localhost")
+        parent_parser.add_argument('-s', '--ssl', action='store_true', help="Use SSL")
         parent_parser.add_argument('-k', '--keyspace', action='store', help='Keyspace')
         parent_parser.add_argument('-b', '--bucket', action='store', help='Bucket name')
         parent_parser.add_argument('-d', '--dbhost', action='store', help='Couchbase hostname', default="localhost")

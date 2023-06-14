@@ -21,7 +21,7 @@ from cbcmgr.schema import ProcessSchema, Schema
 warnings.filterwarnings("ignore")
 logger = logging.getLogger()
 ignore_errors = False
-VERSION = '2.0.2'
+VERSION = '2.1.0'
 
 
 def break_signal_handler(signum, frame):
@@ -395,7 +395,7 @@ class RunMain(object):
             sys.exit(0)
 
         if parameters.command == 'database':
-            sgdb = SGWDatabase(parameters.host, parameters.user, parameters.password)
+            sgdb = SGWDatabase(parameters.host, parameters.user, parameters.password, ssl=parameters.ssl)
             if parameters.db_command == "create":
                 if not parameters.name:
                     parameters.name = parameters.bucket
@@ -423,7 +423,7 @@ class RunMain(object):
             elif parameters.db_command == "wait":
                 sgdb.ready_wait(parameters.name)
         elif parameters.command == 'user':
-            sguser = SGWUser(parameters.host, parameters.user, parameters.password)
+            sguser = SGWUser(parameters.host, parameters.user, parameters.password, ssl=parameters.ssl)
             if parameters.user_command == "create":
                 sguser.create(parameters.name, parameters.sguser, parameters.sgpass)
             elif parameters.user_command == "delete":
@@ -439,11 +439,11 @@ class RunMain(object):
                 for username in usernames:
                     sguser.create(parameters.name, username, parameters.sgpass, channels=f"channel.{username}")
         elif parameters.command == 'auth':
-            sgauth = SGWAuth(parameters.host, parameters.user, parameters.password)
+            sgauth = SGWAuth(parameters.host, parameters.user, parameters.password, ssl=parameters.ssl)
             if parameters.auth_command == "session":
                 sgauth.get_session(parameters.name, parameters.sguser)
         elif parameters.command == 'server':
-            sgserver = SGWServer(parameters.host, parameters.user, parameters.password)
+            sgserver = SGWServer(parameters.host, parameters.user, parameters.password, ssl=parameters.ssl)
             if parameters.server_command == "info":
                 sgserver.print_info()
 
